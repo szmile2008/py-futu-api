@@ -38,6 +38,7 @@ class TinyStrateTigerSell(TinyStrateBase):
             code_ctx['price_jump_last_minute'] = 0
             code_ctx['price_jump_mid'] = 0
             code_ctx['price_jump_count'] = 0
+            code_ctx['price_jump_ref'] = 0
 
             self.run_ctx[code] = code_ctx
 
@@ -84,17 +85,21 @@ class TinyStrateTigerSell(TinyStrateBase):
                 code_ctx['price_jump_last_minute'] = time_mins
                 if code_ctx['price_jump_count'] == 0:
                     code_ctx['price_jump_count'] = 1
+                    code_ctx['price_jump_ref'] = ref_sell_price
+                else:
+                    code_ctx['price_jump_ref'] = (code_ctx['price_jump_ref'] + code_ctx['price_jump_mid'])/2
             elif quote.lastPrice < code_ctx['price_jump_mid'] and time_mins != code_ctx['price_jump_last_minute']:
                 code_ctx['price_jump_count'] += 1
 
-            #上涨达到卖空的设计
+            #上涨达到卖空的设计: 跳了二次以上， 并且处在报价下降的阶段（如果一直上涨，也不会做空)
             if (not code_ctx['is_trade_short']) and code_ctx['price_jump_count'] > 1 and quote.bidPrice1 and \
+                    quote.lastPrice <= code_ctx['price_jump_ref'] and \
                     self.is_ask_bind_price_ok(quote.bidPrice1, quote.lastPrice):
                 code_ctx['is_trade_short'] = True
                 code_ctx['price_sell'] = quote.bidPrice1
                 self.sell(quote.bidPrice1, self.num_short, quote.symbol, OrderType.NORMAL, 0, self.account_id)
 
-        #上涨后又下跌可购回
+        #上涨后又下跌平仓， 赚取至少 close_short_rate 的差价
         if (not code_ctx['is_trade_close']) and code_ctx['is_trade_short'] and quote.askPrice1 and \
                 code_ctx['price_sell'] and quote.lastPrice <= (1 - self.close_short_rate) * code_ctx['price_sell'] and \
                 self.is_ask_bind_price_ok(quote.askPrice1, quote.lastPrice):
