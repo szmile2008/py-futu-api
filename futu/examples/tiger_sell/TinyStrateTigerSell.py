@@ -3,6 +3,7 @@
 '''
     实盘策略范例，接口用法见注释及范例代码
 '''
+from futu import *
 from futu.examples.tiny_quant.tiny_quant_frame.TinyStrateBase import *
 from futu.examples.tiny_quant.tiny_quant_frame.TinyQuantFrame import *
 
@@ -86,7 +87,7 @@ class TinyStrateTigerSell(TinyStrateBase):
                 if code_ctx['price_jump_count'] == 0:
                     code_ctx['price_jump_count'] = 1
                     code_ctx['price_jump_ref'] = ref_sell_price
-                else:
+                elif time_mins != code_ctx['price_jump_last_minute']:
                     code_ctx['price_jump_ref'] = (code_ctx['price_jump_ref'] + code_ctx['price_jump_mid'])/2
             elif quote.lastPrice < code_ctx['price_jump_mid'] and time_mins != code_ctx['price_jump_last_minute']:
                 code_ctx['price_jump_count'] += 1
