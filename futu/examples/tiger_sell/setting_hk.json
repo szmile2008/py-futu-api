@@ -30,7 +30,7 @@
         "_api_port": 11111,
         "_market": "HK",
         "_env_type": "REAL",
-        "_trade_password":"",
+        "_trade_password":"979899",
 
         "logLevel": "info",
         "logConsole": 1,
@@ -46,7 +46,7 @@
         "account_id": 0,
         "price_jump_rate": 0.04,
         "close_short_rate": 0.02,
-        "num_short": 20,
+        "num_short": 1000,
         "ask_bid_drop_max": 0.03,
         "final_param": 0
     }

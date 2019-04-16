@@ -28,7 +28,7 @@ class TinyStrateTigerSell(TinyStrateBase):
        self.run_ctx = {}
 
     def is_ask_bind_price_ok(self, p1, p2):
-        return abs(p1 - p2) < abs(self.ask_bid_drop_max)
+        return abs(p1 - p2) <= abs(self.ask_bid_drop_max)
 
     def clear_ctx(self):
         self.run_ctx = {}
@@ -54,6 +54,7 @@ class TinyStrateTigerSell(TinyStrateBase):
         print("price_jump_rate:", self.price_jump_rate)
         print("close_short_rate:", self.close_short_rate)
         print("num_short:", self.num_short)
+        print("ask_bid_drop_max", self.ask_bid_drop_max)
 
         self.clear_ctx()
         print(self.run_ctx)
@@ -74,38 +75,77 @@ class TinyStrateTigerSell(TinyStrateBase):
         if quote.datetime is not None:
             time_mins = quote.datetime.hour * 60 + quote.datetime.minute
 
-        if not quote.lastPrice or not quote.preClosePrice:
+        # 前一分钟的收盘价
+        am_data = self.get_kl_min1_am(quote.symbol)
+        last_min_close = am_data.close[-2]
+        if not last_min_close:
             return
+
+        print('lastprice = {} close[-5,-1] = {} {} {} , {} , {}'.format(quote.lastPrice, \
+                                            am_data.close[-5], am_data.close[-4], \
+                                            am_data.close[-3], am_data.close[-2], am_data.close[-1]))
+
+        if not quote.lastPrice or not quote.preClosePrice or not time_mins or not quote.askPrice1 or not quote.bidPrice1:
+            return
+
+        order_type = OrderType.NORMAL
+        fall_price_book = 0.03
+        if 'HK.' in quote.symbol:
+            order_type = OrderType.SPECIAL_LIMIT
+            if not quote.askPrice2:
+                return
+            fall_price_book = abs(quote.askPrice2 - quote.askPrice1) * 3
 
         # 当前价高于到期值了
         ref_sell_price = (self.price_jump_rate + 1) * quote.preClosePrice
-        if quote.lastPrice >= ref_sell_price and time_mins:
-            self.log(str(quote.lastPrice))
-            if quote.lastPrice > code_ctx['price_jump_mid']:
+        if quote.lastPrice >= ref_sell_price:
+            str_log = 'symbol:{} price:{}'.format(quote.symbol, quote.lastPrice)
+            self.log(str_log)
+
+            last_jump_mid = code_ctx['price_jump_mid']
+            if quote.lastPrice > last_jump_mid:
                 code_ctx['price_jump_mid'] = quote.lastPrice
                 code_ctx['price_jump_last_minute'] = time_mins
+
                 if code_ctx['price_jump_count'] == 0:
-                    code_ctx['price_jump_count'] = 1
                     code_ctx['price_jump_ref'] = ref_sell_price
-                elif time_mins != code_ctx['price_jump_last_minute']:
-                    code_ctx['price_jump_ref'] = (code_ctx['price_jump_ref'] + code_ctx['price_jump_mid'])/2
-            elif quote.lastPrice < code_ctx['price_jump_mid'] and time_mins != code_ctx['price_jump_last_minute']:
+                else:
+                    code_ctx['price_jump_ref'] = (code_ctx['price_jump_mid'] + last_min_close) / 2
+
+                # 每次报价创新高，重置计数
+                code_ctx['price_jump_count'] = 1
+
+            elif quote.lastPrice < (code_ctx['price_jump_ref'] - fall_price_book) and time_mins != code_ctx['price_jump_last_minute']:
                 code_ctx['price_jump_count'] += 1
 
-            #上涨达到卖空的设计: 跳了二次以上， 并且处在报价下降的阶段（如果一直上涨，也不会做空)
-            if (not code_ctx['is_trade_short']) and code_ctx['price_jump_count'] > 1 and quote.bidPrice1 and \
-                    quote.lastPrice <= code_ctx['price_jump_ref'] and \
-                    self.is_ask_bind_price_ok(quote.bidPrice1, quote.lastPrice):
-                code_ctx['is_trade_short'] = True
-                code_ctx['price_sell'] = quote.bidPrice1
-                self.sell(quote.bidPrice1, self.num_short, quote.symbol, OrderType.NORMAL, 0, self.account_id)
+            print(code_ctx)
+            # 上涨达到卖空的设计: 跳了二次以上， 并且处在报价下降的阶段（如果一直上涨，也不会做空)
+            if not code_ctx['is_trade_short']:
+                str_log = 'price_jump_count:{} quote.bidPrice1:{} price_jump_ref:{}'.format(code_ctx['price_jump_count'], quote.bidPrice1, code_ctx['price_jump_ref'])
+                self.log(str_log)
+                if code_ctx['price_jump_count'] > 1 and quote.bidPrice1 and \
+                    quote.lastPrice <= (code_ctx['price_jump_ref'] - fall_price_book) and \
+                        self.is_ask_bind_price_ok(quote.bidPrice1, quote.lastPrice):
 
-        #上涨后又下跌平仓， 赚取至少 close_short_rate 的差价
+                    ret, data = self.sell(quote.bidPrice1, self.num_short, quote.symbol, order_type, 0,
+                                          self.account_id)
+                    str_log = 'sell symbol: {} price:{} vol:{} ret: data:{}'.format(quote.symbol, quote.bidPrice1,
+                                                                                    self.num_short, ret, data)
+                    self.log(str_log)
+                    if ret == RET_OK:
+                        code_ctx['is_trade_short'] = True
+                        code_ctx['price_sell'] = quote.bidPrice1
+
+        # 上涨后又下跌平仓， 赚取至少 close_short_rate 的差价
         if (not code_ctx['is_trade_close']) and code_ctx['is_trade_short'] and quote.askPrice1 and \
                 code_ctx['price_sell'] and quote.lastPrice <= (1 - self.close_short_rate) * code_ctx['price_sell'] and \
                 self.is_ask_bind_price_ok(quote.askPrice1, quote.lastPrice):
-            code_ctx['is_trade_close'] = True
-            self.buy(quote.askPrice1, self.num_short, quote.symbol, OrderType.NORMAL, 0, self.account_id)
+            ret, data = self.buy(quote.askPrice1, self.num_short, quote.symbol, order_type, 0, self.account_id)
+            str_log = 'buy symbol:{} last_price:{} buy_price:{} vol:{} ret:{}'.format(quote.symbol, quote.lastPrice, quote.askPrice1,
+                                                                                               self.num_short, ret)
+            self.log(str_log)
+            if ret == RET_OK:
+                code_ctx['is_trade_close'] = True
 
 
     def on_bar_min1(self, tiny_bar):
