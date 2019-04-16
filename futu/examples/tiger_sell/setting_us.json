@@ -46,7 +46,7 @@
         "account_id": 0,
         "price_jump_rate": 0.06,
         "close_short_rate": 0.03,
-        "num_short": 20,
+        "trade_vol": 10,
         "ask_bid_drop_max": 0.05,
         "final_param": 0
     }
