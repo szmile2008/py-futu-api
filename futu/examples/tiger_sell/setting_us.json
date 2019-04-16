@@ -44,10 +44,11 @@
         "help": "长线看空code, 每涨price_jump_rate, 就卖空一次， 但当跌回调close_short_rate，就平仓一次， 如果持续涨， 第二天继续卖空",
         "all_code" : ["US.TIGR", "US.RUHN"],
         "account_id": 0,
-        "price_jump_rate": 0.06,
-        "close_short_rate": 0.03,
+        "price_jump_rate": 0.08,
+        "close_short_rate": 0.02,
         "trade_vol": 10,
-        "ask_bid_drop_max": 0.05,
+        "ask_bid_drop_max": 0.03,
+        "ref_price_slip_size": 5,
         "final_param": 0
     }
 }

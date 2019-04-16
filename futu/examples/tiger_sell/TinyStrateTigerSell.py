@@ -25,7 +25,8 @@ class TinyStrateTigerSell(TinyStrateBase):
        self.price_jump_rate = None
        self.close_short_rate = None
        self.trade_vol = None
-       self.ask_bid_drop_max = 0
+       self.ask_bid_drop_max = None
+       self.ref_price_slip_size = None
        self.run_ctx = {}
 
     def is_ask_bind_price_ok(self, p1, p2):
@@ -65,7 +66,8 @@ class TinyStrateTigerSell(TinyStrateBase):
         print("price_jump_rate:", self.price_jump_rate)
         print("close_short_rate:", self.close_short_rate)
         print("trade_vol:", self.trade_vol)
-        print("ask_bid_drop_max", self.ask_bid_drop_max)
+        print("ask_bid_drop_max:", self.ask_bid_drop_max)
+        print("ref_price_slip_size:", self.ref_price_slip_size)
 
         self.clear_ctx()
         print(self.run_ctx)
@@ -100,12 +102,12 @@ class TinyStrateTigerSell(TinyStrateBase):
             return
 
         order_type = OrderType.NORMAL
-        fall_price_slip = 0.05
+        fall_price_slip = 0.01 * self.ref_price_slip_size
         if 'HK.' in quote.symbol:
             order_type = OrderType.SPECIAL_LIMIT
-            if not quote.askPrice2:
+            if not quote.askPrice2 or not quote.askPrice1:
                 return
-            fall_price_slip = abs(quote.askPrice2 - quote.askPrice1) * 5
+            fall_price_slip = abs(quote.askPrice2 - quote.askPrice1) * self.ref_price_slip_size
 
         # 当前价高于到期值了
         ref_sell_price = (self.price_jump_rate + 1) * quote.preClosePrice
@@ -146,14 +148,17 @@ class TinyStrateTigerSell(TinyStrateBase):
         if (not code_ctx['is_trade_close']) and code_ctx['is_trade_short'] and quote.askPrice1 and \
                 code_ctx['price_sell'] and quote.lastPrice <= (1 - self.close_short_rate) * code_ctx['price_sell'] and \
                 self.is_ask_bind_price_ok(quote.askPrice1, quote.lastPrice):
-            ret, data = self.buy(quote.askPrice1, self.trade_vol, quote.symbol, order_type, 0, self.account_id)
-            str_log = 'buy symbol:{} last_price:{} buy_price:{} vol:{} ret:{}'.format(quote.symbol, quote.lastPrice, quote.askPrice1,
-                                                                                               self.trade_vol, ret)
-            self.log(str_log)
-            if ret == RET_OK and data['order_id'][0]:
-                code_ctx['is_trade_close'] = True
-                code_ctx['orderid_close'] = data['order_id'][0]
-                code_ctx['trade_time_close'] = time_mins
+
+            short_vol = self.query_order_filled(code_ctx['orderid_short'])
+            if short_vol != 0 and short_vol <= self.trade_vol:
+                ret, data = self.buy(quote.askPrice1, short_vol, quote.symbol, order_type, 0, self.account_id)
+                str_log = 'buy symbol:{} last_price:{} buy_price:{} vol:{} ret:{}'.format(quote.symbol,quote.lastPrice,
+                                                                                     quote.askPrice1, short_vol, ret)
+                self.log(str_log)
+                if ret == RET_OK and data['order_id'][0]:
+                    code_ctx['is_trade_close'] = True
+                    code_ctx['orderid_close'] = data['order_id'][0]
+                    code_ctx['trade_time_close'] = time_mins
 
     def on_bar_min1(self, tiny_bar):
         """每一分钟触发一次回调, 如果订单不能在下一分钟内成交，就取消掉"""
@@ -188,6 +193,17 @@ class TinyStrateTigerSell(TinyStrateBase):
             sleep(0.1)
 
         return False
+
+    def query_order_filled(self, order_id):
+        order = self.get_tiny_trade_order(order_id)
+        if order is None:
+            return 0
+
+        if order.order_status == OrderStatus.FILLED_ALL or order.order_status == OrderStatus.CANCELLED_PART or \
+                order.order_status == OrderStatus.FILLED_PART:
+            return order.trade_volume
+        return 0
+
 
     def on_bar_day(self, tiny_bar):
         """收盘时会触发一次日k回调"""
