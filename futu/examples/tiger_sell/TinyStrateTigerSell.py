@@ -54,6 +54,8 @@ class TinyStrateTigerSell(TinyStrateBase):
             code_ctx['price_jump_ref'] = 0
             code_ctx['place_order_errs'] = 0
 
+            self.run_ctx[code] = code_ctx
+
     def is_place_order_err_limited(self, symbol):
         if symbol not in self.run_ctx.keys():
             return False
