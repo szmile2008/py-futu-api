@@ -52,8 +52,23 @@ class TinyStrateTigerSell(TinyStrateBase):
             code_ctx['price_jump_mid'] = 0
             code_ctx['price_jump_count'] = 0
             code_ctx['price_jump_ref'] = 0
+            code_ctx['place_order_errs'] = 0
 
-            self.run_ctx[code] = code_ctx
+    def is_place_order_err_limited(self, symbol):
+        if symbol not in self.run_ctx.keys():
+            return False
+        code_ctx = self.run_ctx[symbol]
+
+        if code_ctx['place_order_errs'] >= 10:
+            self.log("place_order_err_limited: {}".format(code_ctx['place_order_errs']))
+            return True
+        return False
+
+    def record_place_order_err(self, symbol):
+        if symbol not in self.run_ctx.keys():
+            return
+        code_ctx = self.run_ctx[symbol]
+        code_ctx['place_order_errs'] += 1
 
     def on_init_strate(self):
         """策略加载完配置后的回调
@@ -133,16 +148,20 @@ class TinyStrateTigerSell(TinyStrateBase):
                     quote.lastPrice <= (code_ctx['price_jump_ref'] - fall_price_slip) and \
                         self.is_ask_bind_price_ok(quote.bidPrice1, quote.lastPrice):
 
-                    ret, data = self.sell(quote.bidPrice1, self.trade_vol, quote.symbol, order_type, 0,
+                    ret = RET_ERROR
+                    if not self.is_place_order_err_limited(quote.symbol):
+                        ret, data = self.sell(quote.bidPrice1, self.trade_vol, quote.symbol, order_type, 0,
                                           self.account_id)
-                    str_log = 'sell symbol: {} price:{} vol:{} ret: data:{}'.format(quote.symbol, quote.bidPrice1,
-                                                                                    self.trade_vol, ret, data)
+                    str_log = 'sell symbol: {} price:{} vol:{} ret:'.format(quote.symbol, quote.bidPrice1,
+                                                                                    self.trade_vol, ret)
                     self.log(str_log)
                     if ret == RET_OK and data['order_id'][0]:
                         code_ctx['is_trade_short'] = True
                         code_ctx['orderid_short'] = data['order_id'][0]
                         code_ctx['trade_time_short'] = time_mins
                         code_ctx['price_sell'] = quote.bidPrice1
+                    else:
+                        self.record_place_order_err(quote.symbol)
 
         # 上涨后又下跌平仓， 赚取至少 close_short_rate 的差价
         if (not code_ctx['is_trade_close']) and code_ctx['is_trade_short'] and quote.askPrice1 and \
@@ -151,14 +170,18 @@ class TinyStrateTigerSell(TinyStrateBase):
 
             short_vol = self.query_order_filled(code_ctx['orderid_short'])
             if short_vol != 0 and short_vol <= self.trade_vol:
-                ret, data = self.buy(quote.askPrice1, short_vol, quote.symbol, order_type, 0, self.account_id)
-                str_log = 'buy symbol:{} last_price:{} buy_price:{} vol:{} ret:{}'.format(quote.symbol,quote.lastPrice,
+                ret = RET_ERROR
+                if not self.is_place_order_err_limited(quote.symbol):
+                    ret, data = self.buy(quote.askPrice1, short_vol, quote.symbol, order_type, 0, self.account_id)
+                str_log = 'buy symbol:{} last_price:{} buy_price:{} vol:{} ret:{}'.format(quote.symbol, quote.lastPrice,
                                                                                      quote.askPrice1, short_vol, ret)
                 self.log(str_log)
                 if ret == RET_OK and data['order_id'][0]:
                     code_ctx['is_trade_close'] = True
                     code_ctx['orderid_close'] = data['order_id'][0]
                     code_ctx['trade_time_close'] = time_mins
+                else:
+                    self.record_place_order_err(quote.symbol)
 
     def on_bar_min1(self, tiny_bar):
         """每一分钟触发一次回调, 如果订单不能在下一分钟内成交，就取消掉"""
